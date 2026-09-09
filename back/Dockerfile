@@ -6,6 +6,7 @@
 #   - Install all dependencies (including dev deps needed to compile)
 #   - Copy TypeScript config files (tsconfig*.json, nest-cli.json) and the src/ folder
 #   - Run the production build (compile TS into dist/)
+
 FROM node:20-alpine AS builder
 
 # ---- Stage 2: runtime ----
