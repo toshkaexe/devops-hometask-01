@@ -1,10 +1,11 @@
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped
     env_file:
       - .env.development.db
     ports:
-      - "15432:5432"
+      - "127.0.0.1:15432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -15,11 +16,12 @@ services:
 
   back:
     image: ${DOCKERHUB_USERNAME}/todo-back:${IMAGE_TAG}
+    restart: unless-stopped
     platform: linux/amd64
     env_file:
       - .env.development.back
     ports:
-      - "13000:3000"
+      - "127.0.0.1:13000:3000"
     depends_on:
       db:
         condition: service_healthy
@@ -28,9 +30,10 @@ services:
 
   front:
     image: ${DOCKERHUB_USERNAME}/todo-front:${IMAGE_TAG}
+    restart: unless-stopped
     platform: linux/amd64
     ports:
-      - "18080:80"
+      - "127.0.0.1:18080:80"
     depends_on:
       back:
         condition: service_started
