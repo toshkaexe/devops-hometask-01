@@ -16,7 +16,8 @@ jobs:
       # через проброшенный порт 13000 (на VPS вместо этого https://<домен>/api).
       - name: Build images
         run: |
-          . ./.env.development.compose
+          # только DOCKERHUB_USERNAME: APP_VERSION из файла (latest) перебил бы ci
+          export $(grep '^DOCKERHUB_USERNAME=' .env.development.compose)
           docker build -t $DOCKERHUB_USERNAME/todo-back:$APP_VERSION back
           docker build --build-arg VITE_API_URL=http://localhost:13000 \
             -t $DOCKERHUB_USERNAME/todo-front:$APP_VERSION front
