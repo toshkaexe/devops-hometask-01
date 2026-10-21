@@ -63,8 +63,27 @@ jobs:
           retention-days: 7
 
   build:
+    name: build (${{ matrix.service }})
     needs: test            # build стартует только если e2e зелёные
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [back, front]
 
     steps:
       - uses: actions/checkout@v4 #клонирует код из репозитория
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: ${{ matrix.service }}/package-lock.json
+
+      - name: Install deps
+        working-directory: ${{ matrix.service }}
+        run: npm ci
+
+      - name: lint
+        working-directory: ${{ matrix.service }}
+        run: npm run lint
