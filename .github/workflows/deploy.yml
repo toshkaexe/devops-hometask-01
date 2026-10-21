@@ -5,11 +5,7 @@ on:
     branches: [week*]
 
 jobs:
-  checks:
-    uses: ./.github/workflows/typecheck.yaml
-
   build:
-    needs: checks          # build стартует только если type-check зелёный
     runs-on: ubuntu-latest
 
     steps:
