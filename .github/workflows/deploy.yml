@@ -80,7 +80,7 @@ jobs:
           cache: 'npm'
           cache-dependency-path: ${{ matrix.service }}/package-lock.json
 
-      - name: Install deps
+      - name: Install dependencies
         working-directory: ${{ matrix.service }}
         run: npm ci
 
