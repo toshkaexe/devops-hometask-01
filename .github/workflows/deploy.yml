@@ -5,7 +5,64 @@ on:
     branches: [week*]
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      APP_VERSION: ci        # локальный тег образов, в Docker Hub не уходит
+    steps:
+      - uses: actions/checkout@v4
+
+      # Собираем образы из текущего коммита. Фронт смотрит на back напрямую
+      # через проброшенный порт 13000 (на VPS вместо этого https://<домен>/api).
+      - name: Build images
+        run: |
+          . ./.env.development.compose
+          docker build -t $DOCKERHUB_USERNAME/todo-back:$APP_VERSION back
+          docker build --build-arg VITE_API_URL=http://localhost:13000 \
+            -t $DOCKERHUB_USERNAME/todo-front:$APP_VERSION front
+
+      # CORS_ORIGIN в .env.development.back — прод-домен; для раннера
+      # подменяем его на origin фронта из e2e (localhost:18080).
+      - name: Start stack
+        run: |
+          cat > docker-compose.ci.yml <<'EOF'
+          services:
+            back:
+              environment:
+                CORS_ORIGIN: http://localhost:18080
+          EOF
+          docker compose --env-file .env.development.compose \
+            -f docker-compose.yml -f docker-compose.ci.yml up -d
+          timeout 60 bash -c 'until curl -sf http://localhost:13000/health; do sleep 2; done'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: front/package-lock.json
+
+      - name: Install Playwright
+        working-directory: front
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: E2E
+        run: set -a && . ./.env.development.e2e && cd front && npm run e2e
+
+      - name: Stack logs
+        if: failure()
+        run: docker compose --env-file .env.development.compose logs
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-traces
+          path: front/test-results/
+          retention-days: 7
+
   build:
+    needs: test            # build стартует только если e2e зелёные
     runs-on: ubuntu-latest
 
     steps:
