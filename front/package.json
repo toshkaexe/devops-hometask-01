@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "gen:api": "openapi-typescript http://localhost:3000/swagger-json -o ./src/api/schema.d.ts --root-types",
     "e2e": "playwright test",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "test": "playwright test"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",

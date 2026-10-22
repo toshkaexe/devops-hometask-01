@@ -5,6 +5,9 @@ on:
     branches: [week*]
 
 jobs:
+  checks:
+    uses: ./.github/workflows/typecheck.yaml
+
   test:
     runs-on: ubuntu-latest
     env:
@@ -49,7 +52,7 @@ jobs:
           npx playwright install --with-deps chromium
 
       - name: E2E
-        run: set -a && . ./.env.development.e2e && cd front && npm run e2e
+        run: set -a && . ./.env.development.e2e && cd front && npm test
 
       - name: Stack logs
         if: failure()
@@ -64,12 +67,16 @@ jobs:
 
   build:
     name: build (${{ matrix.service }})
-    needs: test            # build стартует только если e2e зелёные
+    needs: [checks, test]  # build стартует только если type-check и e2e зелёные
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        service: [back, front]
+        include:
+          - service: back
+            build_args: ''
+          - service: front
+            build_args: --build-arg VITE_API_URL=${{ vars.VITE_API_URL }}
 
     steps:
       - uses: actions/checkout@v4 #клонирует код из репозитория
@@ -87,3 +94,92 @@ jobs:
       - name: lint
         working-directory: ${{ matrix.service }}
         run: npm run lint
+
+      - name: Docker Hub login
+        run: echo "${{ secrets.DOCKER_PASS }}" | docker login -u "${{ secrets.DOCKER_USER }}" --password-stdin
+
+      # Имя образа берём из того же файла, что и compose на VPS, чтобы теги совпали
+      - name: Build & push
+        run: |
+          export $(grep '^DOCKERHUB_USERNAME=' .env.development.compose)
+          IMAGE=$DOCKERHUB_USERNAME/todo-${{ matrix.service }}
+          docker build ${{ matrix.build_args }} \
+            -t $IMAGE:sha-${{ github.sha }} \
+            -t $IMAGE:latest \
+            ${{ matrix.service }}
+          docker push $IMAGE:sha-${{ github.sha }}
+          docker push $IMAGE:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      # db не трогаем: --no-deps пересоздаёт только back и front
+      - uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          script_stop: true
+          script: |
+            cd ~/myapp
+            sed -i "s|^APP_VERSION=.*|APP_VERSION=sha-${{ github.sha }}|" .env.development.compose
+            docker compose --env-file .env.development.compose pull back front
+            docker compose --env-file .env.development.compose up -d --no-deps back front
+
+  verify:
+    needs: deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # E2E_BASE_URL берётся из закоммиченного .env.production.e2e
+      - name: Smoke
+        run: make smoke-deployed
+
+      - name: Deployed version matches commit
+        run: |
+          set -a && . ./.env.production.e2e && set +a
+          HEALTH=$(curl -sSf --max-time 10 "${E2E_BASE_URL%/}/api/health")
+          echo "$HEALTH"
+          echo "$HEALTH" | grep -q "\"version\":\"sha-${{ github.sha }}\"" || {
+            echo "✗ ожидали version=sha-${{ github.sha }}"
+            exit 1
+          }
+
+  notify:
+    needs: [checks, test, build, deploy, verify]
+    if: always()           # иначе job пропустится, если какой-то из needs упал
+    runs-on: ubuntu-latest
+    steps:
+      - name: Telegram
+        run: |
+          CHECKS="${{ needs.checks.result }}"
+          TEST="${{ needs.test.result }}"
+          BUILD="${{ needs.build.result }}"
+          DEPLOY="${{ needs.deploy.result }}"
+          VERIFY="${{ needs.verify.result }}"
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          WHERE="${{ github.repository }} @ ${{ github.ref_name }}"
+
+          if [ "$CHECKS" != "success" ]; then
+            TEXT="❌ Type-check упал%0A$WHERE%0A$RUN_URL"
+          elif [ "$TEST" != "success" ]; then
+            TEXT="❌ E2E упали%0A$WHERE%0A$RUN_URL"
+          elif [ "$BUILD" != "success" ]; then
+            TEXT="❌ Build упал%0A$WHERE%0A$RUN_URL"
+          elif [ "$DEPLOY" != "success" ]; then
+            TEXT="❌ Deploy упал%0A$WHERE%0A$RUN_URL"
+          elif [ "$VERIFY" != "success" ]; then
+            TEXT="❌ Smoke не прошёл (задеплоено, но не отвечает корректно)%0A$WHERE%0A$RUN_URL"
+          else
+            TEXT="✅ Деплой успешен%0A$WHERE%0AActor: ${{ github.actor }}%0AVersion: sha-${{ github.sha }}"
+          fi
+
+          RESPONSE=$(curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+            -d "chat_id=${{ secrets.TELEGRAM_CHAT_ID }}" \
+            -d "text=$TEXT" \
+            -d "disable_web_page_preview=true")
+
+          echo "$RESPONSE"
+          echo "$RESPONSE" | grep -q '"ok":true' || { echo "Telegram API rejected"; exit 1; }
