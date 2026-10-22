@@ -24,6 +24,13 @@ jobs:
         working-directory: ${{ matrix.service }}
         run: npm ci
 
+      # front (Vite) держит код в project references с "files": [] в корне,
+      # поэтому голый tsc --noEmit там ничего не проверяет
       - name: Type-check
         working-directory: ${{ matrix.service }}
-        run: npx tsc --noEmit
+        run: |
+          if [ -f tsconfig.app.json ]; then
+            npx tsc -p tsconfig.app.json --noEmit && npx tsc -p tsconfig.node.json --noEmit
+          else
+            npx tsc --noEmit
+          fi
